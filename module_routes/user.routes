@@ -1,0 +1,232 @@
+const router = require('express').Router();
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+const userSchema = require('../model_schema/user.models');
+const mailSending= require("../middleware/gmail");
+const productSchema = require("../model_schema/product.models");
+
+const multer = require('multer');
+const xlsx = require("xlsx");
+const storageMulter = require("../middleware/multer");
+const path = require('path');
+const uploadFiles = multer({ storage: storageMulter.storage })
+
+
+router.post('/sign_up', async(req,res)=>{
+    try {
+        const username = req.body.username;
+        const email= req.body.email;
+        const phoneNumber = req.body.phoneNumber;
+        if(username && email && phoneNumber ){
+            let username1 = await userSchema.findOne({'username': username})
+            let email1 = await userSchema.findOne({'email': email})
+            let phonenumber1= await userSchema.findOne({'phoneNumber': phoneNumber})
+            if(username1){
+                return res.json({status: "failure", message: 'username already exist'})
+            }
+            else if(email1){
+                return res.json({status: "failure", message: 'email already exist'})
+            }
+            else if(phonenumber1){
+                return res.json({status: "failure", message: 'mobileNumber already exist'})
+            }
+        }else{
+            return res.status(400).json({status: "failure", message: 'must enter the username,emailid and Mobilenumber'})
+        }
+        const mailData ={
+            from : "esakkiraj.platosys@gmail.com",
+            to : email,
+            subject : "email verification",
+            fileName : "verifiedemail.ejs",
+            details : {
+            email:email
+            }
+        }
+        let verifiedemail = mailSending.mailSending(mailData)
+        let userdetail = new userSchema(req.body)
+        let password=req.body.password;
+        let salt = await bcrypt.genSalt(10);
+        userdetail.password = bcrypt.hashSync(password, salt);
+        let result = await userdetail.save();
+        console.log("after hashing:"+ userdetail.password);
+        return res.status(200).json({status: "success", message: "user details are added successfully", data: result})
+    } catch (error) {
+        console.log(error.message)
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+router.get("/verifiedEmail", async(req,res)=>{
+    try {
+        const details=await userSchema.findOne({email: req.query.email}).exec();
+        if(details){
+            userSchema.updateOne({email: req.query.email}, {loginStatus:true},{new:true}).exec();
+
+            return res.status(200).json("email verified successfully")
+        }else{
+            return res.status(200).json("email verification failed")
+        }
+    } catch (error) {
+        console.log(error.message)
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+
+
+
+router.post("/signUp",async(req,res)=>{
+    console.log(req.body.username);
+    try{
+        const username = req.body.username;
+        const email= req.body.email;
+        const phoneNumber = req.body.phoneNumber;
+
+        if(username){
+            let usernameDetails = await userSchema.findOne({'username':username}).exec()
+            if(usernameDetails){
+                return res.json({status:"failure",message:"username already exist"})
+            }
+        }else{
+            return res.sendStatus(400).json({status:'failure',message:'username is must'})
+        }
+        if(email){
+            let useremailDetails = await userSchema.findOne({"email":email}).exec()
+            if(useremailDetails){
+                return res.json({status:"failure",message:"email already exist"})
+            }
+            
+        }else{
+            return res.status(400).json({status:"failure",message:'email address is must'})
+        }
+        
+        if(phoneNumber){
+            let userphoneNumberDetails = await userSchema.findOne({"phoneNumber":phoneNumber}).exec()
+            if(userphoneNumberDetails){
+                return res.json({status:"failure",message:"phoneNumber already exist"})
+            }
+        }else{
+            return res.status(400).json({status:"failure",message:"phoneNumber is must"})
+        }
+
+        let user = new userSchema(req.body);
+        console.log('before hasing')
+        console.log(user.password);
+        if(req.body.password){
+            let password = req.body.password;
+            let salt = await bcrypt.genSalt(10);
+            user.password = bcrypt.hashSync(password,salt)
+            console.log("after hashing")
+            console.log(user.password);
+        }
+        let result =await user.save();
+        return res.status(200).json({status:"success",message:"user details added successfully",data:result})
+
+    }catch (error) {
+        console.log(error.message)
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+
+
+router.post("/accountlogin",async(req,res)=>{
+    try{
+        let username =req.body.username;
+        let password = req.body.password;
+        let userDetails;
+        let details= await userSchema.findOne({username:username}).select("-password-_id").exec()
+        if(username){
+            userDetails = await userSchema.findOne({username:username}).exec()
+            if(!userDetails){
+                return res.status(400).json({status:"failure",message:"please you may signup first"}); 
+            }
+        }
+        else{return res.status(400).json({status:"failure",message:"please enter your username"})
+    }
+    if(userDetails){
+        let ismatch= await bcrypt.compare(password,userDetails.password)
+        if(userDetails.firstLoginStatus !==true){
+            await userSchema.findOneAndUpdate({uuid:userDetails.uuid},{firstLoginStatus:true},{new:true}).exec();
+        }
+       // let payload = {uuid: userDetails.uuid} 
+            if(ismatch){
+               // var userData = details.toObject()
+               // let jwttoken = jwt.sign(payload, process.env.secrectKey)
+               // userData.jwttoken = jwttoken
+                return res.status(200).json({status: "success", message: "login successfull", data: userDetails})
+            }else{
+                return res.status(200).json({status: "failure", message: "login failed"})
+            }
+        }
+    }catch(error){
+        console.log(error.message)
+        return res.status(500).json({status:"failure",message:error.message})
+    }
+
+});
+
+router.post("/accountlogout", async(req,res)=>{
+    try {
+        await userSchema.findOneAndUpdate({uuid: req.params.uuid}, {new:true}).exec()
+        return res.status(200).json({status: "success", message: "logout success"})
+    } catch (error) {
+        console.log(error.message)
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+
+
+router.post("/mailSendingApi", async(req, res)=>{
+    try {
+        const toMail = req.body.toMail;
+        const subject = req.body.subject;
+       // const text = req.body.text;
+        const mailData = {
+            from: "esakkiraj.platosys@gmail.com",
+            to: toMail,
+            subject: subject,
+            fileName: 'verifiedemail.ejs',
+            details:{
+                name: "raj",
+                date: new Date()
+            },
+            //templates:'verified'
+        }
+        //trainingmern@gmail.com
+        await mailSending.mailSending(mailData).then(data=>{
+            return res.status(200).json({status: "success", message: "Mail sent successfully"})
+        }).catch((error)=>{ 
+            return res.status(400).json({status: "failure", message: "Mail sent failed"})
+        })   
+    } catch (error) {
+        console.log(error.message)
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+
+
+router.post('/bulk_xl_upload', uploadFiles.single('file'), async(req, res)=>{
+    try {
+        let path = './uploadFiles/' + req.file.filename;
+        console.log(path);
+        let sheetDetail = xlsx.readFile(path);
+        let sheet_list = sheetDetail.SheetNames;
+        let result = xlsx.utils.sheet_to_json(sheetDetail.Sheets[sheet_list[0]]);       
+        console.log(result);
+        for (let datas of result) {
+            let Details = await productSchema.findOne({productName:datas.productName})
+            if(Details){
+                updateData = await productSchema.findOneAndUpdate({productName:datas.productName},{quantity:Details.quantity+datas.quantity}, {new:true})
+                }else{
+                    const newData = new productSchema(datas);
+                    const newProductsDatas = await newData.save();
+                    console.log("newProductsDatas:", newProductsDatas);
+                }
+           }
+        return res.status(200).json({status: "success", message: "Bulk upload completed"})
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({status: "failure", message: error.message})
+    }
+});
+
+module.exports=router;
